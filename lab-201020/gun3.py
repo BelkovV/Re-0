@@ -3,8 +3,6 @@ import tkinter as tk
 import math
 import time
 
-# print (dir(math))
-
 WIDTH = 800
 HEIGHT = 600
 
@@ -14,14 +12,19 @@ root.geometry(str(WIDTH) + 'x' + str(HEIGHT))
 canv = tk.Canvas(root, bg='black')
 canv.pack(fill=tk.BOTH, expand=1)
 
-FPS = 30
-G = 5
-LIFETIME = 300
-NUM = 5
-SPEED = 160
-MAX_BULLETS = 5
-MAX_MISSES = 1
+FPS = 40
+G = 150 #Gravity, px/sec^2
+LIFETIME = 10 #Bullet lifetime, sec
+NUM = 5 #Number of targets
+SPEED = 160 #Maximum target start speed, px/sec
+MAX_BULLETS = 5 #Maximum number of bullets allowed
+MAX_MISSES = 3 #Targets to miss until gameover
 DoGravityAffectTargets = 0.1
+
+RED = '#cc0000'
+GREEN = '#00cc00'
+FONT = ('Helvetica', '28')
+END_LINE = ['Game Over', 'Press F to continue']
 
 def rgb_to_string(rgb):
 	d = {10: 'a', 11: 'b', 12: 'c', 13: 'd', 14: 'e', 15: 'f'}
@@ -34,8 +37,8 @@ def rgb_to_string(rgb):
 	return res
 
 
-class ball():
-	def __init__(self, x=40, y=450, time=LIFETIME):
+class Ball():
+	def __init__(self, x=40, y=450, time=LIFETIME*FPS):
 		""" Конструктор класса ball
 
 		Args:
@@ -77,7 +80,7 @@ class ball():
 		"""
 		self.x += self.vx/FPS
 		self.y -= self.vy/FPS
-		self.vy -= G
+		self.vy -= G/FPS
 		
 		if self.x <= self.r or self.x >= WIDTH - self.r:
 			self.vx = -self.vx
@@ -101,7 +104,7 @@ class ball():
 		return False
 
 
-class gun():
+class Gun():
 	def __init__(self, xpos = 20, ypos = HEIGHT/2):
 		self.f2_power = 10
 		self.f2_on = 0
@@ -115,23 +118,23 @@ class gun():
 	def fire2_start(self, event):
 		self.f2_on = 1
 
-	def fire2_end(self, event):
+	def fire2_end(self, event, bullet):
 		"""Выстрел мячом.
 
 		Происходит при отпускании кнопки мыши.
 		Начальные значения компонент скорости мяча vx и vy зависят от положения мыши.
 		"""
-		global balls, bullet
+		self.f2_on = 0
 		if bullet < MAX_BULLETS:
-			bullet += 1
-			new_ball = ball(self.endx, self.endy)
+			new_ball = Ball(self.endx, self.endy)
 			new_ball.r += 5
 			self.targetting(event)
 			new_ball.vx = self.f2_power * FPS * math.cos(self.an)
 			new_ball.vy = - self.f2_power * FPS * math.sin(self.an)
-			balls += [new_ball]
-		self.f2_on = 0
+			self.f2_power = 10
+			return new_ball
 		self.f2_power = 10
+		return None
 
 	def targetting(self, event=0):
 		"""Прицеливание. Зависит от положения мыши."""
@@ -163,7 +166,7 @@ class gun():
 			canv.itemconfig(self.id, fill='white')
 
 
-class target():
+class Target():
 	def __init__(self, vx = -SPEED, vy = 0):
 		self.id = canv.create_oval(0,0,0,0)
 		self.vx = vx
@@ -182,7 +185,7 @@ class target():
 	def move(self):
 		self.x += self.vx/FPS
 		self.y -= self.vy/FPS
-		self.vy -= G*DoGravityAffectTargets
+		self.vy -= G*DoGravityAffectTargets/FPS
 		self.set_coords()
 		
 		if self.x >= WIDTH - self.r:
@@ -212,81 +215,129 @@ class target():
 		"""Попадание шарика в цель."""
 		self.new_target()
 
-
-bullet = 0
-badscore = 0
-balls = []
-
-def restart(event=0):
-	global badscore, balls
-	if badscore > -MAX_MISSES:
-		badscore = 0
-		for b in balls:
-			canv.delete(b.id)
-		balls = []
-		new_game()
-	print(event.keycode)
+class Game():
+	def __init__(self, gun_coords, num_targets = NUM):
+		self.gun = Gun(gun_coords[0], gun_coords[1])
+		self.balls = []
+		self.targets = []
+		for i in range(0, NUM):
+			self.targets.append(Target())
+		self.score = 0
+		self.badscore = 0
+		self.num_bullets = 0
+		self.finished = False
+		self.just_finished = False
+	
+	def update_gun(self, event):
+		self.gun.targetting(event)
+	
+	def fire_start(self, event):
+		canv.focus_set()
+		self.gun.fire2_start(event)
 		
-
-def new_game(event=''):
-	global balls, bullet, badscore
-	g1 = gun(20, HEIGHT/2)
-	bullet = 0
-	balls = []
-	targets = []
-	for i in range(0, NUM):
-		targets.append(target())
-	canv.bind('<Button-1>', g1.fire2_start)
-	canv.bind('<ButtonRelease-1>', g1.fire2_end)
-	canv.bind('<Motion>', g1.targetting)
-	canv.bind('<KeyPress>', restart)
-
-	z = 0.03
-	score = 0
-	text_left = canv.create_text(30,30,text = str(score), font = ('Helvetica', '28'), fill='white')
-	text_right = canv.create_text(WIDTH-30,30,text = str(score), font = ('Helvetica', '28'), fill='red')
-	text_center = canv.create_text(WIDTH/2,30,text = str(bullet), font = ('Times', '28'), fill='#00cc00')
-
-	while not MAX_MISSES or badscore < MAX_MISSES:
+	def shoot(self, event):
+		new_ball = self.gun.fire2_end(event, self.num_bullets)
+		if new_ball != None:
+			self.balls.append(new_ball)
+			self.num_bullets+=1
+		
+	def tick(self):
 		i = 0
-		while i < len(balls):
-			b = balls[i]
+		while i < len(self.balls):
+			b = self.balls[i]
 			b.move()
-			if b.live <= 0:
-				balls.pop(i)
+			
+			if b.live <= 0: # Ball is Dead
+				self.balls.pop(i)
 				canv.delete(b.id)
-				bullet -= 1
+				self.num_bullets -= 1
 			else:
 				i+=1
-			for tg in targets:
+			
+			for tg in self.targets: # Detect Collision
 				if b.hittest(tg):
-					score += int(50/tg.r)
+					self.score += int(50/tg.r)
 					tg.hit()
-					canv.itemconfig(text_left, text=str(score))
-		for tg in targets:
-			badscore += tg.move()
-			canv.itemconfig(text_right, text=str(badscore))
+					
+		for tg in self.targets:
+			self.badscore += tg.move()
+			
+		self.gun.power_up()
 
-		center_color = '#00cc00'
-		if bullet >= 5:
-			center_color = '#cc0000'
-		canv.itemconfig(text_center, text=str(bullet), fill=center_color)
+	def restart(self, event):
+		self.badscore = 0
+		for b in self.balls:
+			canv.delete(b.id)
+		self.balls = []
+		self.num_bullets = 0
+		for tg in self.targets:
+			tg.new_target()
+	
+	def close(self, event=0):
+		self.finished = True
+	
+	def close_on_x(self, event):
+		if event.char == 'x':
+			self.close()
 		
+	def key_detect(self, event):
+		if event.char == 'f':
+			self.restart(event)
+			canv.bind("<Key>", self.close_on_x)
+			self.just_finished = False
+		else:
+			self.close()
 		
+def key(event):
+    print ("pressed", repr(event.char))
+
+def new_game(event=''):
+	g = Game((20, HEIGHT/2), NUM)
+
+	canv.bind('<Button-1>', g.fire_start)
+	canv.bind('<ButtonRelease-1>', g.shoot)
+	canv.bind('<Motion>', g.update_gun)
+	canv.bind('<Key>', g.close_on_x)
+
+	text_left = canv.create_text(30,30,text = str(g.score), font = FONT, fill='white')
+	text_right = canv.create_text(WIDTH-30,30,text = str(g.badscore), font = FONT, fill='red')
+	text_center = [canv.create_text(WIDTH/2,30,text = str(g.num_bullets), font = FONT, fill=GREEN)]
+	
+	just_finished = False
+
+	while not g.finished:
+		if not MAX_MISSES or g.badscore < MAX_MISSES:
+			g.tick()
+			canv.itemconfig(text_left, text=str(g.score)) #Updating scores
+			canv.itemconfig(text_right, text=str(g.badscore))
+
+			center_color = GREEN
+			if g.num_bullets >= MAX_BULLETS:
+				center_color = RED
+			
+			canv.itemconfig(text_center[0], text=str(g.num_bullets), fill=center_color)
+			for line in text_center[1:]:
+				canv.itemconfig(line, text='')
+			
+			g.gun.targetting()
+		else:
+			if not g.just_finished:
+				canv.bind("<Key>", g.key_detect)
+				g.just_finished = True
+				
+				i = 0
+				for line in END_LINE: # Printing end lines
+					if i < len(text_center):
+						canv.itemconfig(text_center[i], text=line, fill=RED)
+					else:
+						new_line = canv.create_text(WIDTH/2, (i+1)*30, text = line, font = FONT, fill=RED)
+						text_center.append(new_line)
+					i+=1
+					
 		canv.update()
 		time.sleep(1/FPS)
-		g1.targetting()
-		g1.power_up()
-		
-	canv.itemconfig(text_center, text='Game Over', fill='#cc0000')
-	canv.update()
-	time.sleep(10)
 	
-	canv.delete(gun)
-	print(score)
-	#root.after(750, new_game)
-
+	canv.delete(g.gun)
+	print(g.score)
 
 new_game()
-
-#mainloop()
