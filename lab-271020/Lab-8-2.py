@@ -5,8 +5,8 @@ import time
 
 ##preferences
 #game
-WIDTH = 800
-HEIGHT = 600
+WIDTH = 1200
+HEIGHT = 800
 FPS = 30
 MAGICTIME = 5
 
@@ -25,6 +25,7 @@ cloud_points = 15
 G = 300
 LIFETIME = 10
 BALL_R = 10
+MAX_BALLS = 5
 
 #gun
 LEN_TO_SPEED = 30
@@ -57,6 +58,7 @@ class Sphere():
 		self.locked_x = 0
 		self.locked_y = 0
 		self.live = 1
+		self.isInvulnerable = False
 
 	def set_coords(self):
 		canv.coords(
@@ -88,6 +90,9 @@ class Sphere():
 		canv.delete(self.id)
 		self.live = 0
 		return False
+	
+	def get_score(self):
+		return 1
 		
 	def hit(self, obj):
 		"""Функция проверяет сталкивалкивается ли данный обьект с целью, описываемой в обьекте obj.
@@ -110,7 +115,7 @@ class Ball(Sphere):
 		x - начальное положение мяча по горизонтали
 		y - начальное положение мяча по вертикали
 		"""
-		color = choice(['blue', 'green', 'teal', 'brown'])
+		color = choice(['blue', 'green', 'tan', 'brown'])
 		Sphere.__init__(self, x, y, BALL_R, vx, vy, color)
 		self.live = LIFETIME * FPS
 		self.g = G
@@ -200,20 +205,20 @@ class Target(Sphere): #Classic target, randomly changes itself when hit, so ther
 	def new_target(self):
 		""" Инициализация новой цели. """
 		self.x = rnd(WIDTH//2, WIDTH - R_MAX)
-		self.y = rnd(HEIGHT//2, HEIGHT - R_MAX)
+		self.y = rnd(R_MAX, HEIGHT - R_MAX)
 		self.r = rnd(R_MIN, R_MAX)
 		self.set_coords()
 		self.vx = rnd(-V_MAX, V_MAX)
 		self.vy = rnd(-V_MAX, V_MAX)
 
-	def hit(self, obj, points=-1):
+	def get_score(self):
+		return R_MAX//self.r
+
+	def hit(self, obj):
 		"""Попадание шарика в цель."""
 		if Sphere.hit(self, obj):
-			if points == -1:
-				points = R_MAX//self.r
 			self.new_target()
-			return points
-		return 0
+			return self.get_score()
 		
 
 class BlackTarget(Target): #Olya's Target, the ball reflects from it
@@ -239,13 +244,15 @@ class BlackTarget(Target): #Olya's Target, the ball reflects from it
 		self.mark_configure()
 		canv.coords(self.mark_id, *self.point_list)
 	
+	def get_score(self):
+		return 3*Target.get_score(self)
+	
 	def hit(self, obj):
-		points = Target.hit(self, obj)
-		if points:
+		if Target.hit(self, obj):
 			obj.vx *= -1
 			obj.vy *= -1
 			self.live = 0
-		return 2*points
+			return self.get_score()
 		
 	def delete(self):
 		Sphere.delete(self)
@@ -271,6 +278,7 @@ class Cloud(): #A cloud that will grant reverse gravity to balls it hits
 		self.set_color()
 		self.id = draw_cloud(self.x, self.y, self.r/8, self.color)
 		self.live = 1
+		self.isInvulnerable = False
 		
 	def set_color(self):
 		self.color = choice(cloud_colors)
@@ -299,13 +307,16 @@ class Cloud(): #A cloud that will grant reverse gravity to balls it hits
 		for item in self.id:
 			canv.delete(item)
 	
+	def get_score(self):
+		return int(cloud_points*(1 + (48 - self.r)/8))
+	
 	def hit(self, obj):
 		if Sphere.hit(self, obj):
 			obj.g *= -2
 			self.live = 0
 			obj.color = self.color
 			canv.itemconfig(obj.id, fill = obj.color)
-			return int(cloud_points*(1 + (48 - self.r)/8))
+			return self.get_score()
 		return 0
 
 class Bomb(Ball):
@@ -322,16 +333,19 @@ class Bomb(Ball):
 		self.delete()
 		self.parent.game.score -= cloud_points
 	
+	def get_score(self):
+		return -1
+	
 	def move(self):
 		Sphere.move(self)
 		self.vy+=self.g/FPS
 		for t in self.parent.game.targets:
-			if (t.id != self.id) and (t.id != self.parent.id):
+			if (t.id != self.id) and (t.id != self.parent.id) and not t.isInvulnerable:
 				t.hit(self)
 		if (self.x <= self.parent.game.gun.x) and (self.y <= self.parent.game.gun.y):
 			self.blow_up()
-		
-	
+
+
 class DarkCloud(Cloud):
 	def __init__(self, game):
 		Cloud.__init__(self)
@@ -340,12 +354,14 @@ class DarkCloud(Cloud):
 	def set_color(self):
 		self.color = choice(dark_cloud_colors)
 	
+	def get_score(self):
+		return -1
+	
 	def hit(self, obj):
 		res = Cloud.hit(self, obj)
 		if res:
 			obj.g *= -1
 			return -1
-		return 0
 	
 	def drop(self):
 		if (self.x <= self.game.gun.x) or (self.game.time % FPS == 0):
@@ -356,53 +372,66 @@ class DarkCloud(Cloud):
 
 def gravitate(obj1, obj2):
 	r = ((obj2.x - obj1.x)**2 + (obj2.y - obj1.y)**2)**0.5
-	k = 2*obj1.r*obj2.r*obj1.g/(r**3)
+	k = 2*obj1.r*obj2.r*obj2.g/(r**3)
 	obj1.vx += k*(obj2.x - obj1.x)
-	obj1.vy += k*(obj2.x - obj1.x)
+	obj1.vy += k*(obj2.y - obj1.y)
 
 class Enemy(Target):
 	def __init__(self, game):
 		self.game = game
 		Target.__init__(self)
-		self.g = G/10
+		self.g = G/3
 		self.color = 'black'
 		canv.itemconfig(self.id, fill = self.color)
 		self.score = 1
 		self.vx = 0
 		self.vy = 0
+		self.isInvulnerable = True
 	
 	def move(self):
 		for t in self.game.targets:
 			if t.id != self.id:
 				if self.hittest(t):
-					self.score += t.hit(self)
-					self.r = (self.r**2 + t.r**2)**0.5
+					t.hit(self)
+					self.eat(t)
 				else:
-					gravitate(self, t)
-		Target.move(self)
-		self.vx *= 0.999
-		self.vy *= 0.999
+					gravitate(t, self)
+		self.set_coords()
+		self.r -= 50/(FPS*self.r)
+		if self.r <= 0:
+			self.delete()
 	
 	def hittest(self, obj):
 		if ((self.x - obj.x)**2+(self.y - obj.y)**2) < (self.r/2 + obj.r)**2:
 			return True
 		return False
 	
+	def eat(self, obj):
+		self.r = (self.r**2 + obj.r**2)**0.5
+		self.score += obj.get_score()
+	
+	def get_score(self):
+		return self.score
+	
 	def hit(self, obj):
-		if Sphere.hit(self, obj):
-			self.delete()
-			self.live = 0
-			return self.score
+		dice = rnd(0, 3)
+		if self.hittest(obj):
+			if not dice:
+				self.delete()
+				self.live = 0
+				return self.get_score()
+			self.eat(obj)
+			obj.delete()
 		gravitate(obj, self)
-		return 0
-		
+
 
 class Game():
 	def __init__(self, x = 20, y = 3*HEIGHT/4):
 		self.gun = Gun(x, y)
 		self.bullet = 0
 		self.balls = []
-		self.targets = [Target() for i in range(NUM_TARGS)]
+		self.targets = []
+		self.targets += [Target() for i in range(NUM_TARGS)]
 		self.id_points = canv.create_text(30, 30, text = '0', font = ('Times', '28'))
 		self.live = True
 		self.score = 0
@@ -410,8 +439,9 @@ class Game():
 
 	def shoot(self, event):
 		new_ball = self.gun.fire2_end(event)
-		self.balls.append(new_ball)
-		self.bullet += 1
+		if self.bullet < MAX_BALLS:
+			self.balls.append(new_ball)
+			self.bullet += 1
 		
 	def tick(self):
 		i = 0
@@ -420,9 +450,11 @@ class Game():
 			b.move()
 			if b.live <= 0:
 				self.balls.pop(i)
+				self.bullet -= 1
 			else:
 				for t in self.targets:
-					self.score += t.hit(b)
+					if t.hit(b):
+						self.score += t.get_score()
 				i+=1
 		i = 0
 		while i < len(self.targets):
@@ -444,15 +476,15 @@ class Game():
 		self.time += 1
 		
 	def magic(self):
-		magic_id = rnd(0, 40)
-		if magic_id < 10:
+		magic_id = rnd(0, 70)
+		if magic_id < 20:
 			missile = BlackTarget()
-		elif magic_id < 20:
-			missile = Cloud()
 		elif magic_id < 30:
-			missile = Enemy(self)
+			missile = Cloud()
 		elif magic_id < 40:
 			missile = DarkCloud(self)
+		elif magic_id < 70:
+			missile = Enemy(self)
 		self.targets.append(missile)
 	
 	def keypress(self, event):
